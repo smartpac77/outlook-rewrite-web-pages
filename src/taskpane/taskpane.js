@@ -240,7 +240,32 @@ function saveAllSettings(all) {
 // "no selection = whole body" (there, whole paragraph/body; here, whole body,
 // since Office.js does not expose caret-paragraph granularity).
 // ---------------------------------------------------------------------------
+// Some Office.js hosts (observed: new Outlook for Windows, as of 2026-10-28)
+// don't implement body.getSelectedDataAsync/setSelectedDataAsync yet even
+// though they declare Mailbox 1.5+ support. Feature-detect rather than
+// assuming availability, and fall back to whole-body read/write so the
+// add-in still works there, just without selection-only rewriting.
+function supportsSelectionApis() {
+  const body = Office.context.mailbox.item && Office.context.mailbox.item.body;
+  return !!body && typeof body.getSelectedDataAsync === "function" && typeof body.setSelectedDataAsync === "function";
+}
+
+function getFullBodyText() {
+  return new Promise((resolve, reject) => {
+    Office.context.mailbox.item.body.getAsync(Office.CoercionType.Text, (fullResult) => {
+      if (fullResult.status !== Office.AsyncResultStatus.Succeeded) {
+        reject(new Error(fullResult.error?.message || "Could not read message body"));
+        return;
+      }
+      resolve({ scope: "body", text: fullResult.value || "" });
+    });
+  });
+}
+
 function getSelectedOrFullText() {
+  if (!supportsSelectionApis()) {
+    return getFullBodyText();
+  }
   return new Promise((resolve, reject) => {
     Office.context.mailbox.item.body.getSelectedDataAsync(Office.CoercionType.Text, (selResult) => {
       if (selResult.status !== Office.AsyncResultStatus.Succeeded) {
@@ -252,13 +277,7 @@ function getSelectedOrFullText() {
         resolve({ scope: "selection", text: selectedText });
         return;
       }
-      Office.context.mailbox.item.body.getAsync(Office.CoercionType.Text, (fullResult) => {
-        if (fullResult.status !== Office.AsyncResultStatus.Succeeded) {
-          reject(new Error(fullResult.error?.message || "Could not read message body"));
-          return;
-        }
-        resolve({ scope: "body", text: fullResult.value || "" });
-      });
+      getFullBodyText().then(resolve, reject);
     });
   });
 }
@@ -270,7 +289,7 @@ function writeRewrittenText(scope, text) {
       if (result.status === Office.AsyncResultStatus.Succeeded) resolve();
       else reject(new Error(result.error?.message || "Could not write result back"));
     };
-    if (scope === "selection") {
+    if (scope === "selection" && supportsSelectionApis()) {
       Office.context.mailbox.item.body.setSelectedDataAsync(text, coercion, callback);
     } else {
       Office.context.mailbox.item.body.setAsync(text, coercion, callback);
