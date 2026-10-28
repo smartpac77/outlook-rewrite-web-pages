@@ -377,17 +377,31 @@ function getSelectedOrFullText() {
   });
 }
 
+// Office.CoercionType.Text, when WRITING to an HTML-format message body
+// (the common case), inserts the text's newlines as literal "\n" characters
+// inside a single HTML text node — HTML collapses those visually, so the
+// result looks like one run-on line even though the data has line breaks.
+// Writing back as HTML with explicit <br> tags preserves them visually.
+function plainTextToHtml(text) {
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return escaped.replace(/\n/g, "<br>");
+}
+
 function writeRewrittenText(scope, text) {
   return new Promise((resolve, reject) => {
-    const coercion = { coercionType: Office.CoercionType.Text };
+    const coercion = { coercionType: Office.CoercionType.Html };
+    const html = plainTextToHtml(text);
     const callback = (result) => {
       if (result.status === Office.AsyncResultStatus.Succeeded) resolve();
       else reject(new Error(result.error?.message || "Could not write result back"));
     };
     if (scope === "selection" && supportsSelectionApis()) {
-      Office.context.mailbox.item.body.setSelectedDataAsync(text, coercion, callback);
+      Office.context.mailbox.item.body.setSelectedDataAsync(html, coercion, callback);
     } else {
-      Office.context.mailbox.item.body.setAsync(text, coercion, callback);
+      Office.context.mailbox.item.body.setAsync(html, coercion, callback);
     }
   });
 }
