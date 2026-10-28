@@ -183,7 +183,17 @@ function openExternalUrl(url) {
 
 // ---------------------------------------------------------------------------
 // Prompt building — ported from OutlookRewrite.Core/RewritePrompt.cs
+//
+// Line breaks are marked with LINE_BREAK_MARKER rather than left as literal
+// "\n" characters. Plain prompt instructions like "preserve every line
+// break" turned out not to be reliable — models kept "tidying up" single
+// line breaks into blank lines (confirmed live, repeatedly). Turning each
+// line break into an explicit, visible token the model is told to copy
+// verbatim makes this a literal content-preservation task instead of a
+// formatting preference, which models are far more reliable at.
 // ---------------------------------------------------------------------------
+const LINE_BREAK_MARKER = "⏎";
+
 function buildSystemPrompt(language) {
   const lines = [
     `You rewrite text that a user has typed in an email into clear, professional business ${language.name}.`,
@@ -193,7 +203,7 @@ function buildSystemPrompt(language) {
     "- Use a polite, confident, professional tone suitable for emails to clients and colleagues. Avoid stiff wording, jargon and clichés.",
     "- Fix grammar, spelling and word choice. Keep roughly the same length unless the original is unclear.",
     "- Keep the same scope: a sentence stays a sentence, a paragraph stays a paragraph. Do not add a greeting or sign-off unless one is in the input.",
-    "- Preserve every line break exactly where it is in the input, including single line breaks within what reads as one paragraph or thought. Do not merge separate lines into one, reflow text across lines, or add line breaks that were not in the input.",
+    `- The input contains the marker ${LINE_BREAK_MARKER} wherever the original has a line break. Treat ${LINE_BREAK_MARKER} as an opaque marker, not text: never translate, explain, delete, add, move, or merge it. Your output must contain exactly the same number of ${LINE_BREAK_MARKER} markers as the input, each in the same relative position (same number of lines, same blank-line gaps — two consecutive ${LINE_BREAK_MARKER} markers means a blank line and must stay two).`,
     "- Keep product codes, part numbers, URLs and proper nouns unchanged.",
     `- If parts of the input are not already in ${language.name}, express them in business ${language.name} too.`,
     language.isEnglish
@@ -207,7 +217,12 @@ function buildSystemPrompt(language) {
 }
 
 function buildUserPrompt(text) {
-  return `<text>\n${text}\n</text>`;
+  const marked = text.split("\n").join(LINE_BREAK_MARKER);
+  return `<text>\n${marked}\n</text>`;
+}
+
+function unmarkLineBreaks(text) {
+  return text.split(LINE_BREAK_MARKER).join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -645,12 +660,14 @@ async function onRewrite(language) {
     setStatus(statusEl, `Rewriting to ${language.name}…`);
     const system = buildSystemPrompt(language);
     const user = buildUserPrompt(text);
-    const rewritten = await callRewrite(provider, providerSettings.apiKey, model, system, user);
+    const rawRewritten = await callRewrite(provider, providerSettings.apiKey, model, system, user);
 
-    if (!rewritten || rewritten.trim().length === 0) {
+    if (!rawRewritten || rawRewritten.trim().length === 0) {
       setStatus(statusEl, "The provider returned an empty response.", "error");
       return;
     }
+
+    const rewritten = unmarkLineBreaks(rawRewritten);
 
     await writeRewrittenText(scope, rewritten);
     setStatus(statusEl, scope === "selection" ? "Selection rewritten." : "Message rewritten.", "success");
