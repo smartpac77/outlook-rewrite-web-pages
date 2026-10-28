@@ -193,7 +193,7 @@ function buildSystemPrompt(language) {
     "- Use a polite, confident, professional tone suitable for emails to clients and colleagues. Avoid stiff wording, jargon and clichés.",
     "- Fix grammar, spelling and word choice. Keep roughly the same length unless the original is unclear.",
     "- Keep the same scope: a sentence stays a sentence, a paragraph stays a paragraph. Do not add a greeting or sign-off unless one is in the input.",
-    "- Keep paragraph breaks where they are.",
+    "- Preserve every line break exactly where it is in the input, including single line breaks within what reads as one paragraph or thought. Do not merge separate lines into one, reflow text across lines, or add line breaks that were not in the input.",
     "- Keep product codes, part numbers, URLs and proper nouns unchanged.",
     `- If parts of the input are not already in ${language.name}, express them in business ${language.name} too.`,
     language.isEnglish
@@ -345,14 +345,35 @@ function supportsSelectionApis() {
   return !!body && typeof body.getSelectedDataAsync === "function" && typeof body.setSelectedDataAsync === "function";
 }
 
+// Office.CoercionType.Text, when READING an HTML-format message body (the
+// common case), has been observed to turn a single <br> (plain Enter, no
+// blank line) into a SPACE rather than a newline, while a real paragraph
+// boundary survives as "\n" — so single-line-break structure silently gets
+// lost before the text ever reaches the AI prompt. Reading as HTML instead
+// and letting the browser's own layout engine derive the text (via
+// `innerText` on a rendered-but-offscreen container) preserves every line
+// break exactly as the user sees it, independent of Office.js's own
+// Text-coercion heuristics.
+function htmlToPlainText(html) {
+  const container = document.createElement("div");
+  container.style.position = "absolute";
+  container.style.left = "-99999px";
+  container.style.whiteSpace = "pre-wrap";
+  container.innerHTML = html;
+  document.body.appendChild(container);
+  const text = container.innerText;
+  document.body.removeChild(container);
+  return text;
+}
+
 function getFullBodyText() {
   return new Promise((resolve, reject) => {
-    Office.context.mailbox.item.body.getAsync(Office.CoercionType.Text, (fullResult) => {
+    Office.context.mailbox.item.body.getAsync(Office.CoercionType.Html, (fullResult) => {
       if (fullResult.status !== Office.AsyncResultStatus.Succeeded) {
         reject(new Error(fullResult.error?.message || "Could not read message body"));
         return;
       }
-      resolve({ scope: "body", text: fullResult.value || "" });
+      resolve({ scope: "body", text: htmlToPlainText(fullResult.value || "") });
     });
   });
 }
@@ -362,12 +383,12 @@ function getSelectedOrFullText() {
     return getFullBodyText();
   }
   return new Promise((resolve, reject) => {
-    Office.context.mailbox.item.body.getSelectedDataAsync(Office.CoercionType.Text, (selResult) => {
+    Office.context.mailbox.item.body.getSelectedDataAsync(Office.CoercionType.Html, (selResult) => {
       if (selResult.status !== Office.AsyncResultStatus.Succeeded) {
         reject(new Error(selResult.error?.message || "Could not read selection"));
         return;
       }
-      const selectedText = selResult.value?.data || "";
+      const selectedText = htmlToPlainText(selResult.value?.data || "");
       if (selectedText.trim().length > 0) {
         resolve({ scope: "selection", text: selectedText });
         return;
