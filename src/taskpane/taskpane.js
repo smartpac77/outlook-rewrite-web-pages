@@ -354,6 +354,18 @@ function supportsSelectionApis() {
 // `innerText` on a rendered-but-offscreen container) preserves every line
 // break exactly as the user sees it, independent of Office.js's own
 // Text-coercion heuristics.
+// `innerText` can over-count blank-line gaps (e.g. an empty
+// "<div><br></div>" line commonly renders as 3 newlines, not 1), and since
+// we write every "\n" back out as its own "<br>", that inflated count would
+// otherwise compound on every round trip (confirmed live: a single blank
+// line grew to multiple blank lines after a couple of rewrites). Collapsing
+// any run of 2+ newlines down to exactly one blank line (a single "\n\n")
+// keeps every read-write cycle starting from the same normalized shape, so
+// it cannot grow further no matter how the host re-serializes the HTML.
+function normalizeNewlines(text) {
+  return text.replace(/\n{2,}/g, "\n\n");
+}
+
 function htmlToPlainText(html) {
   const container = document.createElement("div");
   container.style.position = "absolute";
@@ -363,7 +375,7 @@ function htmlToPlainText(html) {
   document.body.appendChild(container);
   const text = container.innerText;
   document.body.removeChild(container);
-  return text;
+  return normalizeNewlines(text);
 }
 
 function getFullBodyText() {
@@ -404,7 +416,7 @@ function getSelectedOrFullText() {
 // result looks like one run-on line even though the data has line breaks.
 // Writing back as HTML with explicit <br> tags preserves them visually.
 function plainTextToHtml(text) {
-  const escaped = text
+  const escaped = normalizeNewlines(text)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
