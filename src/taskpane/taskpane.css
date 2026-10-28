@@ -1,0 +1,92 @@
+body {
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+  margin: 0;
+  padding: 16px;
+  color: #242424;
+  font-size: 14px;
+}
+
+header h1 {
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+
+.subtitle {
+  margin: 0 0 16px;
+  color: #616161;
+  font-size: 12px;
+}
+
+label {
+  display: block;
+  margin: 12px 0 4px;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+select,
+input[type="text"],
+input[type="password"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid #c7c7c7;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+button {
+  margin-top: 14px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.primary-button {
+  background: #2b579a;
+  color: #fff;
+}
+
+.primary-button:disabled {
+  background: #9bb3d3;
+  cursor: default;
+}
+
+.secondary-button {
+  background: #e1e1e1;
+  color: #242424;
+}
+
+.status {
+  min-height: 18px;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.status.error {
+  color: #c42b1c;
+}
+
+.status.success {
+  color: #0f7b0f;
+}
+
+.hint {
+  font-size: 11px;
+  color: #616161;
+  margin: 4px 0 0;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid #e1e1e1;
+  margin: 20px 0;
+}
+
+h2 {
+  font-size: 14px;
+  margin: 0 0 4px;
+}

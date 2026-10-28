@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Outlook Rewrite (Web) — Office Add-in XML manifest.
+
+  Targets: Outlook on the web, new Outlook on Windows, and Outlook on Mac.
+  XML manifest chosen over the newer unified JSON manifest because it has the
+  broadest, most mature support across all three of those surfaces today
+  (sideloading via "Add custom add-in > Add from file" works everywhere);
+  the unified manifest's Outlook support is newer and less consistently
+  documented across Mac/web/new Windows. Revisit once Microsoft documents
+  full unified-manifest parity for Outlook.
+
+  Hosted at: https://smartpac77.github.io/outlook-rewrite-web-pages
+-->
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
+  xsi:type="MailApp">
+
+  <Id>4e99af0e-4835-44ad-a27d-0e0a0a1a7d8c</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>OutlookRewrite</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="Rewrite" />
+  <Description DefaultValue="Rewrite the selected email text (or whole message) into professional business language, using your own Anthropic, OpenAI, Google, xAI or Meta API key." />
+  <IconUrl DefaultValue="https://smartpac77.github.io/outlook-rewrite-web-pages/assets/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://smartpac77.github.io/outlook-rewrite-web-pages/assets/icon-128.png" />
+  <SupportUrl DefaultValue="https://github.com/smartpac77/outlook-rewrite-download" />
+
+  <AppDomains>
+    <AppDomain>https://smartpac77.github.io/outlook-rewrite-web-pages</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Mailbox" />
+  </Hosts>
+
+  <Requirements>
+    <Sets>
+      <Set Name="Mailbox" MinVersion="1.5" />
+    </Sets>
+  </Requirements>
+
+  <FormSettings />
+
+  <Permissions>ReadWriteItem</Permissions>
+
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Edit" />
+  </Rule>
+
+  <DisableEntityHighlighting>false</DisableEntityHighlighting>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1" xsi:type="VersionOverridesV1_1">
+    <Requirements>
+      <bt:Sets DefaultMinVersion="1.5">
+        <bt:Set Name="Mailbox" />
+      </bt:Sets>
+    </Requirements>
+
+    <Hosts>
+      <Host xsi:type="MailHost">
+        <DesktopFormFactor>
+          <ExtensionPoint xsi:type="MessageComposeCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="RewriteGroup">
+                <Label resid="GroupLabel" />
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16x16" />
+                  <bt:Image size="32" resid="Icon.32x32" />
+                  <bt:Image size="80" resid="Icon.80x80" />
+                </Icon>
+                <Control xsi:type="Button" id="OpenTaskpaneButton">
+                  <Label resid="OpenTaskpaneButton.Label" />
+                  <Supertip>
+                    <Title resid="OpenTaskpaneButton.Label" />
+                    <Description resid="OpenTaskpaneButton.Tooltip" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16" />
+                    <bt:Image size="32" resid="Icon.32x32" />
+                    <bt:Image size="80" resid="Icon.80x80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="Taskpane.Url" />
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16x16" DefaultValue="https://smartpac77.github.io/outlook-rewrite-web-pages/assets/icon-16.png" />
+        <bt:Image id="Icon.32x32" DefaultValue="https://smartpac77.github.io/outlook-rewrite-web-pages/assets/icon-32.png" />
+        <bt:Image id="Icon.80x80" DefaultValue="https://smartpac77.github.io/outlook-rewrite-web-pages/assets/icon-80.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://smartpac77.github.io/outlook-rewrite-web-pages/src/taskpane/taskpane.html" />
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="GroupLabel" DefaultValue="Rewrite" />
+        <bt:String id="OpenTaskpaneButton.Label" DefaultValue="Rewrite" />
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="OpenTaskpaneButton.Tooltip" DefaultValue="Open Rewrite: turn the selected text (or whole message) into professional business language." />
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

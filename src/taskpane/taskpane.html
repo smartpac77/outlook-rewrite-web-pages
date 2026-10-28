@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+  <title>Rewrite</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <link rel="stylesheet" href="taskpane.css" />
+</head>
+<body>
+  <header>
+    <h1>Rewrite</h1>
+    <p class="subtitle">Rewrite your email into professional business language.</p>
+  </header>
+
+  <main>
+    <section id="rewrite-section">
+      <label for="language-select">Target language</label>
+      <select id="language-select"></select>
+
+      <button id="rewrite-button" class="primary-button">Rewrite</button>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <hr />
+
+    <section id="settings-section">
+      <h2>Settings</h2>
+
+      <label for="provider-select">AI provider</label>
+      <select id="provider-select">
+        <option value="anthropic">Anthropic</option>
+        <option value="openai">OpenAI</option>
+        <option value="google">Google</option>
+        <option value="grok">Grok (xAI)</option>
+        <option value="meta">Meta (Llama API)</option>
+      </select>
+
+      <label for="model-input">Model</label>
+      <input type="text" id="model-input" list="model-suggestions" />
+      <datalist id="model-suggestions"></datalist>
+
+      <label for="api-key-input">API key</label>
+      <input type="password" id="api-key-input" placeholder="Your own API key — stored only on this device" autocomplete="off" />
+      <p class="hint">Get a key from: <span id="api-key-url"></span></p>
+
+      <button id="save-settings-button" class="secondary-button">Save settings</button>
+      <p id="settings-status" class="status" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+
+  <script src="taskpane.js"></script>
+</body>
+</html>
