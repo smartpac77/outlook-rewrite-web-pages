@@ -90,3 +90,72 @@ h2 {
   font-size: 14px;
   margin: 0 0 4px;
 }
+
+.section-subheading {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e1e1e1;
+}
+
+#rewrite-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#rewrite-buttons .primary-button {
+  margin-top: 0;
+}
+
+.license-banner {
+  background: #f3f2f1;
+  border: 1px solid #e1e1e1;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.license-banner p {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.license-banner.licensed {
+  background: #e6f4ea;
+  border-color: #c3e6cb;
+}
+
+.license-actions .secondary-button {
+  margin-top: 0;
+}
+
+.license-key-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.license-key-row input {
+  flex: 1;
+}
+
+.license-key-row button {
+  width: auto;
+  white-space: nowrap;
+}
+
+.add-language-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.add-language-row input {
+  flex: 1;
+}
+
+.small-button {
+  width: auto;
+  margin-top: 0;
+  white-space: nowrap;
+}

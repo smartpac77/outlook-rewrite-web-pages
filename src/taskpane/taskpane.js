@@ -1,4 +1,4 @@
-/* global Office, document */
+/* global Office, document, window */
 
 // ---------------------------------------------------------------------------
 // Languages — ported from OutlookRewriteCS/OutlookRewrite.Core/Languages.cs
@@ -51,7 +51,40 @@ const OTHER_LANGUAGES = [
   { code: "vi", name: "Vietnamese" },
 ].map((l) => Object.assign({ isEnglish: false }, l));
 
-const ALL_LANGUAGES = ENGLISH_LANGUAGES.concat(OTHER_LANGUAGES);
+const BUILT_IN_LANGUAGES = ENGLISH_LANGUAGES.concat(OTHER_LANGUAGES);
+
+function allLanguages() {
+  return BUILT_IN_LANGUAGES.concat(currentSettings.customLanguages || []);
+}
+
+function findLanguage(code) {
+  if (!code) return null;
+  return allLanguages().find((l) => l.code === code) || null;
+}
+
+// Mirrors AppSettings.AddOrReuseCustomLanguage in the Windows add-in: reuse
+// an existing language with the same name (case-insensitive) if one exists,
+// otherwise mint a synthetic "x-slug" code, de-duplicated.
+function addOrReuseCustomLanguage(name) {
+  const trimmed = (name || "").trim();
+  if (!trimmed) return null;
+
+  const existing = allLanguages().find((l) => l.name.toLowerCase() === trimmed.toLowerCase());
+  if (existing) return existing;
+
+  const baseCode = "x-" + trimmed.toLowerCase().replace(/[^a-z0-9]/g, "") || "x-lang";
+  let code = baseCode;
+  let n = 2;
+  const existingCodes = new Set(allLanguages().map((l) => l.code));
+  while (existingCodes.has(code)) {
+    code = `${baseCode}${n++}`;
+  }
+
+  const lang = { code, name: trimmed, isEnglish: false };
+  currentSettings.customLanguages = currentSettings.customLanguages || [];
+  currentSettings.customLanguages.push(lang);
+  return lang;
+}
 
 // ---------------------------------------------------------------------------
 // Providers — ported from OutlookRewriteCS/OutlookRewrite.Core/LlmProvider.cs
@@ -90,6 +123,63 @@ const PROVIDERS = {
 };
 
 const SETTINGS_KEY = "rewriteSettings";
+
+// ---------------------------------------------------------------------------
+// License / trial — ported from OutlookRewriteCS/OutlookRewrite/TrialStatus.cs
+// + LicenseForm.cs. See PayhipLicenseClient.cs: verification needs a Payhip
+// "product secret key", which must NEVER be embedded in this public
+// client-side JS (unlike the Windows build, where it's gitignored and only
+// ever compiled into a binary). Verification instead goes through a small
+// serverless proxy that holds the secret; this file only calls that proxy's
+// public /verify endpoint with the license key, never the secret itself.
+// ---------------------------------------------------------------------------
+const LICENSE_CONFIG = {
+  trialDays: 90,
+  reminderWindowDays: 7,
+  purchaseUrl: "https://REPLACE_WITH_YOUR_PAYHIP_PRODUCT_URL",
+  verifyProxyUrl: "https://REPLACE_WITH_YOUR_LICENSE_PROXY_URL/verify",
+};
+
+function evaluateTrialStatus(settings) {
+  if (settings.licenseVerified && settings.licenseKey) {
+    return { licensed: true, daysLeft: 0, expired: false, inReminderWindow: false };
+  }
+
+  if (!settings.firstRunUtc) {
+    settings.firstRunUtc = new Date().toISOString();
+  }
+
+  const elapsedMs = Date.now() - new Date(settings.firstRunUtc).getTime();
+  const elapsedDays = Math.floor(elapsedMs / (24 * 60 * 60 * 1000));
+  const daysLeft = Math.max(0, LICENSE_CONFIG.trialDays - elapsedDays);
+  const expired = daysLeft <= 0;
+  const inReminderWindow = !expired && daysLeft <= LICENSE_CONFIG.reminderWindowDays;
+
+  return { licensed: false, daysLeft, expired, inReminderWindow };
+}
+
+async function verifyLicenseKey(key) {
+  const trimmed = (key || "").trim();
+  if (!trimmed) return false;
+
+  try {
+    const url = `${LICENSE_CONFIG.verifyProxyUrl}?license_key=${encodeURIComponent(trimmed)}`;
+    const res = await fetch(url);
+    if (!res.ok) return false;
+    const json = await res.json();
+    return json.valid === true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function openExternalUrl(url) {
+  if (Office.context.ui && typeof Office.context.ui.openBrowserWindow === "function") {
+    Office.context.ui.openBrowserWindow(url);
+  } else {
+    window.open(url, "_blank");
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Prompt building — ported from OutlookRewrite.Core/RewritePrompt.cs
@@ -215,6 +305,11 @@ async function callRewrite(provider, apiKey, model, system, userText) {
 // whatever protection the host platform/account provides. Good enough for an
 // MVP bring-your-own-key tool, but worth flagging to users who are sensitive
 // about where their API key is stored.
+//
+// Note on trial enforcement: firstRunUtc lives in this same roaming store,
+// so (like most client-only trial timers) a user who removes and re-adds
+// the add-in resets their trial clock. Acceptable for a $1 product; a
+// stricter server-backed trial isn't worth the complexity here.
 // ---------------------------------------------------------------------------
 function loadAllSettings() {
   try {
@@ -301,6 +396,7 @@ function writeRewrittenText(scope, text) {
 // UI wiring
 // ---------------------------------------------------------------------------
 let currentSettings = {};
+let trialStatus = { licensed: false, daysLeft: 0, expired: false, inReminderWindow: false };
 
 function setStatus(el, message, kind) {
   el.textContent = message || "";
@@ -308,16 +404,45 @@ function setStatus(el, message, kind) {
   if (kind) el.classList.add(kind);
 }
 
-function populateLanguageSelect() {
-  const select = document.getElementById("language-select");
+function populateLanguageSelect(select, value, includeNone) {
   select.innerHTML = "";
-  ALL_LANGUAGES.forEach((lang) => {
+  if (includeNone) {
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "(None)";
+    select.appendChild(none);
+  }
+  allLanguages().forEach((lang) => {
     const option = document.createElement("option");
     option.value = lang.code;
     option.textContent = lang.name;
     select.appendChild(option);
   });
-  select.value = currentSettings.languageCode || "en-US";
+  select.value = value || "";
+}
+
+function populateLanguageSelects() {
+  populateLanguageSelect(document.getElementById("language1-select"), currentSettings.language1 || "en-US", false);
+  populateLanguageSelect(document.getElementById("language2-select"), currentSettings.language2 || "", true);
+  populateLanguageSelect(document.getElementById("language3-select"), currentSettings.language3 || "", true);
+}
+
+function renderRewriteButtons() {
+  const container = document.getElementById("rewrite-buttons");
+  container.innerHTML = "";
+
+  const codes = [currentSettings.language1 || "en-US", currentSettings.language2, currentSettings.language3].filter(Boolean);
+
+  codes.forEach((code) => {
+    const lang = findLanguage(code);
+    if (!lang) return;
+    const button = document.createElement("button");
+    button.className = "primary-button";
+    button.textContent = `Rewrite → ${lang.name}`;
+    button.disabled = trialStatus.expired;
+    button.addEventListener("click", () => onRewrite(lang));
+    container.appendChild(button);
+  });
 }
 
 function populateProviderUi() {
@@ -343,12 +468,48 @@ function populateProviderUi() {
   apiKeyUrlEl.textContent = providerInfo.apiKeyUrl;
 }
 
+function renderLicenseBanner() {
+  const section = document.getElementById("license-section");
+  const message = document.getElementById("license-message");
+  const actions = document.getElementById("license-actions");
+
+  section.hidden = false;
+  section.classList.toggle("licensed", trialStatus.licensed);
+
+  if (trialStatus.licensed) {
+    message.textContent = "This copy of Rewrite is licensed. Thank you for your support!";
+    actions.hidden = true;
+  } else if (trialStatus.expired) {
+    message.textContent = "Your 90-day free trial has ended. Enter a license key below to keep using Rewrite, or purchase one first.";
+    actions.hidden = false;
+  } else if (trialStatus.inReminderWindow) {
+    message.textContent = `Your free trial ends in ${trialStatus.daysLeft} day(s). Enjoying Rewrite? Get a lifetime license for just $1.`;
+    actions.hidden = false;
+  } else {
+    section.hidden = true;
+  }
+}
+
+async function onAddLanguage() {
+  const input = document.getElementById("custom-language-input");
+  const name = input.value.trim();
+  if (!name) return;
+
+  const lang = addOrReuseCustomLanguage(name);
+  input.value = "";
+  populateLanguageSelects();
+  if (!currentSettings.language2) {
+    document.getElementById("language2-select").value = lang.code;
+  } else if (!currentSettings.language3) {
+    document.getElementById("language3-select").value = lang.code;
+  }
+}
+
 async function onSaveSettings() {
   const statusEl = document.getElementById("settings-status");
   const providerSelect = document.getElementById("provider-select");
   const modelInput = document.getElementById("model-input");
   const apiKeyInput = document.getElementById("api-key-input");
-  const languageSelect = document.getElementById("language-select");
 
   const provider = providerSelect.value;
   currentSettings.providers = currentSettings.providers || {};
@@ -357,32 +518,74 @@ async function onSaveSettings() {
     apiKey: apiKeyInput.value.trim(),
   };
   currentSettings.provider = provider;
-  currentSettings.languageCode = languageSelect.value;
+  currentSettings.language1 = document.getElementById("language1-select").value || "en-US";
+  currentSettings.language2 = document.getElementById("language2-select").value || "";
+  currentSettings.language3 = document.getElementById("language3-select").value || "";
 
   try {
     await saveAllSettings(currentSettings);
     setStatus(statusEl, "Settings saved.", "success");
+    renderRewriteButtons();
   } catch (e) {
     setStatus(statusEl, `Could not save settings: ${e.message}`, "error");
   }
 }
 
-async function onRewrite() {
+async function onActivateLicense() {
+  const keyInput = document.getElementById("license-key-input");
+  const statusEl = document.getElementById("license-status");
+  const activateButton = document.getElementById("activate-license-button");
+
+  const key = keyInput.value.trim();
+  if (!key) {
+    setStatus(statusEl, "Paste the license key from your purchase confirmation email.", "error");
+    return;
+  }
+
+  activateButton.disabled = true;
+  setStatus(statusEl, "Verifying…");
+
+  const valid = await verifyLicenseKey(key);
+
+  activateButton.disabled = false;
+
+  if (!valid) {
+    setStatus(statusEl, "That license key could not be verified. Please check it and try again, or contact support.", "error");
+    return;
+  }
+
+  currentSettings.licenseKey = key;
+  currentSettings.licenseVerified = true;
+  try {
+    await saveAllSettings(currentSettings);
+  } catch (e) {
+    setStatus(statusEl, `Licensed, but could not save: ${e.message}`, "error");
+    return;
+  }
+
+  trialStatus = evaluateTrialStatus(currentSettings);
+  setStatus(statusEl, "License activated. Thank you for your support!", "success");
+  renderLicenseBanner();
+  renderRewriteButtons();
+}
+
+async function onRewrite(language) {
   const statusEl = document.getElementById("status");
-  const rewriteButton = document.getElementById("rewrite-button");
-  const languageSelect = document.getElementById("language-select");
   const provider = currentSettings.provider || "anthropic";
   const providerSettings = (currentSettings.providers || {})[provider] || {};
+
+  if (trialStatus.expired) {
+    setStatus(statusEl, "Your trial has ended. Activate a license above to keep rewriting.", "error");
+    return;
+  }
 
   if (!providerSettings.apiKey) {
     setStatus(statusEl, "Add and save an API key in Settings first.", "error");
     return;
   }
 
-  const language = ALL_LANGUAGES.find((l) => l.code === languageSelect.value) || ALL_LANGUAGES[0];
   const model = providerSettings.model || PROVIDERS[provider].defaultModel;
 
-  rewriteButton.disabled = true;
   setStatus(statusEl, "Reading text…");
 
   try {
@@ -392,7 +595,7 @@ async function onRewrite() {
       return;
     }
 
-    setStatus(statusEl, "Rewriting…");
+    setStatus(statusEl, `Rewriting to ${language.name}…`);
     const system = buildSystemPrompt(language);
     const user = buildUserPrompt(text);
     const rewritten = await callRewrite(provider, providerSettings.apiKey, model, system, user);
@@ -406,15 +609,21 @@ async function onRewrite() {
     setStatus(statusEl, scope === "selection" ? "Selection rewritten." : "Message rewritten.", "success");
   } catch (e) {
     setStatus(statusEl, `Rewrite failed: ${e.message}`, "error");
-  } finally {
-    rewriteButton.disabled = false;
   }
 }
 
 Office.onReady(() => {
   currentSettings = loadAllSettings();
 
-  populateLanguageSelect();
+  trialStatus = evaluateTrialStatus(currentSettings);
+  if (!trialStatus.licensed) {
+    // evaluateTrialStatus may have just set firstRunUtc for the first time; persist it.
+    saveAllSettings(currentSettings).catch(() => {});
+  }
+
+  populateLanguageSelects();
+  renderRewriteButtons();
+  renderLicenseBanner();
 
   const providerSelect = document.getElementById("provider-select");
   providerSelect.value = currentSettings.provider || "anthropic";
@@ -422,5 +631,7 @@ Office.onReady(() => {
   providerSelect.addEventListener("change", populateProviderUi);
 
   document.getElementById("save-settings-button").addEventListener("click", onSaveSettings);
-  document.getElementById("rewrite-button").addEventListener("click", onRewrite);
+  document.getElementById("add-language-button").addEventListener("click", onAddLanguage);
+  document.getElementById("buy-license-button").addEventListener("click", () => openExternalUrl(LICENSE_CONFIG.purchaseUrl));
+  document.getElementById("activate-license-button").addEventListener("click", onActivateLicense);
 });
