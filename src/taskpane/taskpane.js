@@ -136,8 +136,8 @@ const SETTINGS_KEY = "rewriteSettings";
 const LICENSE_CONFIG = {
   trialDays: 90,
   reminderWindowDays: 7,
-  purchaseUrl: "https://REPLACE_WITH_YOUR_PAYHIP_PRODUCT_URL",
-  verifyProxyUrl: "https://REPLACE_WITH_YOUR_LICENSE_PROXY_URL/verify",
+  purchaseUrl: "https://payhip.com/b/bGyCq",
+  verifyProxyUrl: "https://outlook-rewrite-license-proxy.smartpac77.workers.dev/verify",
 };
 
 function evaluateTrialStatus(settings) {
