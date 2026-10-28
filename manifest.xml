@@ -43,8 +43,6 @@
     </Sets>
   </Requirements>
 
-  <FormSettings />
-
   <Permissions>ReadWriteItem</Permissions>
 
   <Rule xsi:type="RuleCollection" Mode="Or">
