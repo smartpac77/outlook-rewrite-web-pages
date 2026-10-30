@@ -511,22 +511,30 @@ function getFullBodyText() {
   });
 }
 
+// TEMPORARY DIAGNOSTIC (2026-10-30): selection always falls back to the
+// whole body even after clicking into the body first and selecting text
+// with the mouse — contradicts the GitHub-issue workaround. Surface exactly
+// what getSelectedDataAsync actually returns so we can tell apart "the API
+// isn't really there", "it returns success with empty data", and "it
+// returns an error", instead of guessing further. Remove once diagnosed.
 function getSelectedOrFullText() {
   if (!supportsSelectionApis()) {
-    return getFullBodyText();
+    return getFullBodyText().then((r) => ({ ...r, debugInfo: "selection API not available (typeof check failed)" }));
   }
   return new Promise((resolve, reject) => {
     Office.context.mailbox.item.body.getSelectedDataAsync(Office.CoercionType.Html, (selResult) => {
+      const rawLen = selResult.value?.data ? selResult.value.data.length : 0;
+      const debugPrefix = `selStatus=${selResult.status}, err=${selResult.error?.message || "none"}, rawLen=${rawLen}`;
       if (selResult.status !== Office.AsyncResultStatus.Succeeded) {
-        reject(new Error(selResult.error?.message || "Could not read selection"));
+        reject(new Error(`${selResult.error?.message || "Could not read selection"} [${debugPrefix}]`));
         return;
       }
       const selectedText = htmlToPlainText(selResult.value?.data || "");
       if (selectedText.trim().length > 0) {
-        resolve({ scope: "selection", text: selectedText, closingText: null, quotedText: null });
+        resolve({ scope: "selection", text: selectedText, closingText: null, quotedText: null, debugInfo: `selection used [${debugPrefix}]` });
         return;
       }
-      getFullBodyText().then(resolve, reject);
+      getFullBodyText().then((r) => resolve({ ...r, debugInfo: `fell back to body [${debugPrefix}, trimmedLen=${selectedText.trim().length}]` }), reject);
     });
   });
 }
@@ -759,7 +767,7 @@ async function onRewrite(language) {
   setStatus(statusEl, "Reading text…");
 
   try {
-    const { scope, text, closingText, quotedText } = await getSelectedOrFullText();
+    const { scope, text, closingText, quotedText, debugInfo } = await getSelectedOrFullText();
     if (!text || text.trim().length === 0) {
       setStatus(statusEl, "Nothing to rewrite — select some text or write a message first.", "error");
       return;
@@ -781,7 +789,8 @@ async function onRewrite(language) {
     const rewritten = unmarkLineBreaks(rawRewritten).trim();
 
     await writeRewrittenText(scope, rewritten, closingText, quotedText);
-    setStatus(statusEl, scope === "selection" ? "Selection rewritten." : "Message rewritten.", "success");
+    const baseMsg = scope === "selection" ? "Selection rewritten." : "Message rewritten.";
+    setStatus(statusEl, debugInfo ? `${baseMsg} DEBUG: ${debugInfo}` : baseMsg, "success");
   } catch (e) {
     setStatus(statusEl, `Rewrite failed: ${e.message}`, "error");
   }
