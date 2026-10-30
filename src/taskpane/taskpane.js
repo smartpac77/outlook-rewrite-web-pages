@@ -796,8 +796,31 @@ async function onRewrite(language) {
   }
 }
 
+// TEMPORARY DIAGNOSTIC (2026-10-30): body.getSelectedDataAsync is reported
+// as "not a function" even on Outlook on the web after focusing the body
+// first. Office.js's own isSetSupported() is the authoritative way to ask
+// what requirement sets this specific host session actually honors —
+// show it directly in the UI (no devtools needed) rather than guessing
+// further whether this is a manifest issue or a genuine host gap. Remove
+// once diagnosed.
+function renderDiagnostics() {
+  const sets = ["1.1", "1.2", "1.3", "1.5", "1.8", "1.9", "1.10"];
+  const lines = sets.map((v) => {
+    try {
+      return `${v}=${Office.context.requirements.isSetSupported("Mailbox", v)}`;
+    } catch (e) {
+      return `${v}=err(${e.message})`;
+    }
+  });
+  const diag = document.getElementById("mailbox-requirement-diagnostics");
+  if (diag) {
+    diag.textContent = `DEBUG requirementSets: ${lines.join(" ")} | host=${Office.context.mailbox?.diagnostics?.hostName || "?"} v=${Office.context.mailbox?.diagnostics?.hostVersion || "?"}`;
+  }
+}
+
 Office.onReady(() => {
   currentSettings = loadAllSettings();
+  renderDiagnostics();
 
   trialStatus = evaluateTrialStatus(currentSettings);
   if (!trialStatus.licensed) {
