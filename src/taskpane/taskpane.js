@@ -411,6 +411,54 @@ function splitSignature(html) {
   return { bodyHtml: container.innerHTML, signatureHtml };
 }
 
+// Many signatures aren't an Outlook-inserted <div id="Signature"> at all —
+// just typed sign-off lines at the end of the message ("Kind regards, John
+// Doe", "감사합니다. 홍길동 올림"). There's no structural marker for these,
+// so this is a best-effort pattern match against common closing phrases,
+// not a guarantee — extend CLOSING_PHRASE_PATTERNS as more are reported.
+// Two shapes are recognized: a closing-phrase line followed by a short
+// name-only line ("Regards" / "John"), and a single short line ending in a
+// Korean honorific attached directly to the name ("홍길동 올림").
+const CLOSING_PHRASE_PATTERNS = [
+  /^(kind|best|warm|many)?\s*regards,?$/i,
+  /^sincerely,?$/i,
+  /^(thanks|thank you)[,.!]?$/i,
+  /^cheers,?$/i,
+  /^감사합니다[.!]?$/,
+  /^수고하세요[.!]?$/,
+  /^안녕히\s*계세요[.!]?$/,
+];
+const KOREAN_NAME_SUFFIX_PATTERN = /(올림|드림|드립니다)[.]?$/;
+const MAX_CLOSING_LINE_LENGTH = 40;
+
+function splitTypedClosing(text) {
+  const lines = text.split("\n");
+  while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+  if (lines.length === 0) return { bodyText: text, closingText: null };
+
+  const isShort = (s) => s.length > 0 && s.length <= MAX_CLOSING_LINE_LENGTH;
+  const lastLine = lines[lines.length - 1].trim();
+  let closingLineCount = 0;
+
+  if (isShort(lastLine) && KOREAN_NAME_SUFFIX_PATTERN.test(lastLine)) {
+    closingLineCount = 1;
+  } else if (isShort(lastLine) && lines.length >= 2 && CLOSING_PHRASE_PATTERNS.some((re) => re.test(lines[lines.length - 2].trim()))) {
+    closingLineCount = 2;
+  } else if (CLOSING_PHRASE_PATTERNS.some((re) => re.test(lastLine))) {
+    closingLineCount = 1;
+  }
+
+  if (closingLineCount === 0) return { bodyText: text, closingText: null };
+
+  const closingLines = lines.splice(lines.length - closingLineCount, closingLineCount);
+  while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+
+  const bodyText = lines.join("\n");
+  if (!bodyText.trim()) return { bodyText: text, closingText: null };
+
+  return { bodyText, closingText: closingLines.join("\n") };
+}
+
 function htmlToPlainText(html) {
   const container = document.createElement("div");
   container.style.position = "absolute";
@@ -435,7 +483,8 @@ function getFullBodyText() {
         return;
       }
       const { bodyHtml, signatureHtml } = splitSignature(fullResult.value || "");
-      resolve({ scope: "body", text: htmlToPlainText(bodyHtml), signatureHtml });
+      const { bodyText, closingText } = splitTypedClosing(htmlToPlainText(bodyHtml));
+      resolve({ scope: "body", text: bodyText, signatureHtml, closingText });
     });
   });
 }
@@ -452,7 +501,7 @@ function getSelectedOrFullText() {
       }
       const selectedText = htmlToPlainText(selResult.value?.data || "");
       if (selectedText.trim().length > 0) {
-        resolve({ scope: "selection", text: selectedText, signatureHtml: null });
+        resolve({ scope: "selection", text: selectedText, signatureHtml: null, closingText: null });
         return;
       }
       getFullBodyText().then(resolve, reject);
@@ -473,10 +522,11 @@ function plainTextToHtml(text) {
   return escaped.replace(/\n/g, "<br>");
 }
 
-function writeRewrittenText(scope, text, signatureHtml) {
+function writeRewrittenText(scope, text, signatureHtml, closingText) {
   return new Promise((resolve, reject) => {
     const coercion = { coercionType: Office.CoercionType.Html };
-    const html = plainTextToHtml(text) + (signatureHtml || "");
+    const closingHtml = closingText ? "<br><br>" + plainTextToHtml(closingText) : "";
+    const html = plainTextToHtml(text) + closingHtml + (signatureHtml || "");
     const callback = (result) => {
       if (result.status === Office.AsyncResultStatus.Succeeded) resolve();
       else reject(new Error(result.error?.message || "Could not write result back"));
@@ -686,7 +736,7 @@ async function onRewrite(language) {
   setStatus(statusEl, "Reading text…");
 
   try {
-    const { scope, text, signatureHtml } = await getSelectedOrFullText();
+    const { scope, text, signatureHtml, closingText } = await getSelectedOrFullText();
     if (!text || text.trim().length === 0) {
       setStatus(statusEl, "Nothing to rewrite — select some text or write a message first.", "error");
       return;
@@ -707,7 +757,7 @@ async function onRewrite(language) {
     // result.Trim()).
     const rewritten = unmarkLineBreaks(rawRewritten).trim();
 
-    await writeRewrittenText(scope, rewritten, signatureHtml);
+    await writeRewrittenText(scope, rewritten, signatureHtml, closingText);
     setStatus(statusEl, scope === "selection" ? "Selection rewritten." : "Message rewritten.", "success");
   } catch (e) {
     setStatus(statusEl, `Rewrite failed: ${e.message}`, "error");
