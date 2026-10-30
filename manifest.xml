@@ -46,7 +46,7 @@
   <FormSettings>
     <Form xsi:type="ItemEdit">
       <DesktopSettings>
-        <SourceLocation DefaultValue="https://smartpac77.github.io/outlook-rewrite-web-pages/src/taskpane/taskpane.html?v=8" />
+        <SourceLocation DefaultValue="https://smartpac77.github.io/outlook-rewrite-web-pages/src/taskpane/taskpane.html?v=9" />
       </DesktopSettings>
     </Form>
   </FormSettings>
@@ -102,7 +102,7 @@
         <bt:Image id="Icon.80x80" DefaultValue="https://smartpac77.github.io/outlook-rewrite-web-pages/assets/icon-80.png" />
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="Taskpane.Url" DefaultValue="https://smartpac77.github.io/outlook-rewrite-web-pages/src/taskpane/taskpane.html?v=8" />
+        <bt:Url id="Taskpane.Url" DefaultValue="https://smartpac77.github.io/outlook-rewrite-web-pages/src/taskpane/taskpane.html?v=9" />
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabel" DefaultValue="Rewrite" />

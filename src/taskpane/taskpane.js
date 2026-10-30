@@ -204,7 +204,7 @@ function buildSystemPrompt(language) {
     "- Fix grammar, spelling and word choice. Keep roughly the same length unless the original is unclear.",
     "- Keep the same scope: a sentence stays a sentence, a paragraph stays a paragraph. Do not add a greeting or sign-off unless one is in the input.",
     `- The input contains the marker ${LINE_BREAK_MARKER} wherever the original has a line break. Treat ${LINE_BREAK_MARKER} as an opaque marker, not text: never translate, explain, delete, add, move, or merge it. Your output must contain exactly the same number of ${LINE_BREAK_MARKER} markers as the input, each in the same relative position (same number of lines, same blank-line gaps — two consecutive ${LINE_BREAK_MARKER} markers means a blank line and must stay two).`,
-    "- Keep product codes, part numbers, URLs and proper nouns unchanged.",
+    "- Keep product codes, part numbers, URLs, email addresses, phone numbers and proper nouns exactly as written, character for character — never reformat, translate, or adjust spacing/punctuation in these, even when translating the rest of the text.",
     `- If parts of the input are not already in ${language.name}, express them in business ${language.name} too.`,
     language.isEnglish
       ? `- Use ${language.name} spelling and conventions.`
@@ -381,6 +381,36 @@ function normalizeNewlines(text) {
   return text.replace(/\n{2,}/g, "\n\n");
 }
 
+// Outlook inserts the user's signature as a <div id="Signature"> wrapper
+// (the standard OWA/new-Outlook convention) containing their name, contact
+// details, a logo/photo image, and links. Rewriting the whole body as plain
+// text and back destroys all of that — confirmed live: signature, images,
+// phone numbers and website links all got mangled or dropped. Detecting
+// and splitting the signature off before the AI ever sees it, then
+// reattaching its original HTML byte-for-byte afterward, keeps it
+// completely untouched. (If no id="Signature" element is found — a custom
+// signature, or none at all — there's nothing to split off and the whole
+// body is rewritten as before.)
+function findSignatureElement(root) {
+  const candidates = root.querySelectorAll("[id]");
+  for (const el of candidates) {
+    if (el.id && el.id.toLowerCase() === "signature") return el;
+  }
+  return null;
+}
+
+function splitSignature(html) {
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  const sigEl = findSignatureElement(container);
+  if (!sigEl) {
+    return { bodyHtml: html, signatureHtml: null };
+  }
+  const signatureHtml = sigEl.outerHTML;
+  sigEl.remove();
+  return { bodyHtml: container.innerHTML, signatureHtml };
+}
+
 function htmlToPlainText(html) {
   const container = document.createElement("div");
   container.style.position = "absolute";
@@ -390,7 +420,11 @@ function htmlToPlainText(html) {
   document.body.appendChild(container);
   const text = container.innerText;
   document.body.removeChild(container);
-  return normalizeNewlines(text);
+  // Trim leading/trailing whitespace/newlines so a trailing line break the
+  // browser's selection happens to include doesn't become a leading/trailing
+  // ⏎ marker the model is told to preserve verbatim (mirrors the Windows
+  // add-in's GetTargetRange trim).
+  return normalizeNewlines(text).trim();
 }
 
 function getFullBodyText() {
@@ -400,7 +434,8 @@ function getFullBodyText() {
         reject(new Error(fullResult.error?.message || "Could not read message body"));
         return;
       }
-      resolve({ scope: "body", text: htmlToPlainText(fullResult.value || "") });
+      const { bodyHtml, signatureHtml } = splitSignature(fullResult.value || "");
+      resolve({ scope: "body", text: htmlToPlainText(bodyHtml), signatureHtml });
     });
   });
 }
@@ -417,7 +452,7 @@ function getSelectedOrFullText() {
       }
       const selectedText = htmlToPlainText(selResult.value?.data || "");
       if (selectedText.trim().length > 0) {
-        resolve({ scope: "selection", text: selectedText });
+        resolve({ scope: "selection", text: selectedText, signatureHtml: null });
         return;
       }
       getFullBodyText().then(resolve, reject);
@@ -438,10 +473,10 @@ function plainTextToHtml(text) {
   return escaped.replace(/\n/g, "<br>");
 }
 
-function writeRewrittenText(scope, text) {
+function writeRewrittenText(scope, text, signatureHtml) {
   return new Promise((resolve, reject) => {
     const coercion = { coercionType: Office.CoercionType.Html };
-    const html = plainTextToHtml(text);
+    const html = plainTextToHtml(text) + (signatureHtml || "");
     const callback = (result) => {
       if (result.status === Office.AsyncResultStatus.Succeeded) resolve();
       else reject(new Error(result.error?.message || "Could not write result back"));
@@ -651,7 +686,7 @@ async function onRewrite(language) {
   setStatus(statusEl, "Reading text…");
 
   try {
-    const { scope, text } = await getSelectedOrFullText();
+    const { scope, text, signatureHtml } = await getSelectedOrFullText();
     if (!text || text.trim().length === 0) {
       setStatus(statusEl, "Nothing to rewrite — select some text or write a message first.", "error");
       return;
@@ -667,9 +702,12 @@ async function onRewrite(language) {
       return;
     }
 
-    const rewritten = unmarkLineBreaks(rawRewritten);
+    // Trim in case the model adds stray leading/trailing whitespace outside
+    // the marker scheme despite instructions (mirrors the Windows add-in's
+    // result.Trim()).
+    const rewritten = unmarkLineBreaks(rawRewritten).trim();
 
-    await writeRewrittenText(scope, rewritten);
+    await writeRewrittenText(scope, rewritten, signatureHtml);
     setStatus(statusEl, scope === "selection" ? "Selection rewritten." : "Message rewritten.", "success");
   } catch (e) {
     setStatus(statusEl, `Rewrite failed: ${e.message}`, "error");
