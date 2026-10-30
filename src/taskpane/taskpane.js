@@ -350,11 +350,16 @@ function saveAllSettings(all) {
 // "no selection = whole body" (there, whole paragraph/body; here, whole body,
 // since Office.js does not expose caret-paragraph granularity).
 // ---------------------------------------------------------------------------
-// Some Office.js hosts (observed: new Outlook for Windows, as of 2026-10-28)
-// don't implement body.getSelectedDataAsync/setSelectedDataAsync yet even
-// though they declare Mailbox 1.5+ support. Feature-detect rather than
-// assuming availability, and fall back to whole-body read/write so the
-// add-in still works there, just without selection-only rewriting.
+// Confirmed live (2026-10-28 through 2026-10-30, on both new Outlook for
+// Windows and Outlook on the web at outlook.live.com — same "newOutlook"
+// engine either way) that body.getSelectedDataAsync/setSelectedDataAsync
+// are missing even though Office.context.requirements.isSetSupported
+// ('Mailbox', '1.2') reports true — the host misreports its own
+// capability. Focusing the body first (a workaround for a related,
+// different office-js GitHub issue) does not help here. This is a
+// host-side bug, not fixable from the add-in; feature-detect and fall
+// back to whole-body read/write so the add-in still works, just without
+// selection-only rewriting on affected hosts.
 function supportsSelectionApis() {
   const body = Office.context.mailbox.item && Office.context.mailbox.item.body;
   return !!body && typeof body.getSelectedDataAsync === "function" && typeof body.setSelectedDataAsync === "function";
@@ -511,30 +516,27 @@ function getFullBodyText() {
   });
 }
 
-// TEMPORARY DIAGNOSTIC (2026-10-30): selection always falls back to the
-// whole body even after clicking into the body first and selecting text
-// with the mouse — contradicts the GitHub-issue workaround. Surface exactly
-// what getSelectedDataAsync actually returns so we can tell apart "the API
-// isn't really there", "it returns success with empty data", and "it
-// returns an error", instead of guessing further. Remove once diagnosed.
+// Confirmed live (2026-10-30, see README) that body.getSelectedDataAsync is
+// genuinely absent on this host even though Office.context.requirements.
+// isSetSupported('Mailbox', '1.2') reports true — a host-side capability
+// misreport, not something fixable here. supportsSelectionApis() still
+// feature-detects properly, so this degrades cleanly to whole-body rewrite.
 function getSelectedOrFullText() {
   if (!supportsSelectionApis()) {
-    return getFullBodyText().then((r) => ({ ...r, debugInfo: "selection API not available (typeof check failed)" }));
+    return getFullBodyText();
   }
   return new Promise((resolve, reject) => {
     Office.context.mailbox.item.body.getSelectedDataAsync(Office.CoercionType.Html, (selResult) => {
-      const rawLen = selResult.value?.data ? selResult.value.data.length : 0;
-      const debugPrefix = `selStatus=${selResult.status}, err=${selResult.error?.message || "none"}, rawLen=${rawLen}`;
       if (selResult.status !== Office.AsyncResultStatus.Succeeded) {
-        reject(new Error(`${selResult.error?.message || "Could not read selection"} [${debugPrefix}]`));
+        reject(new Error(selResult.error?.message || "Could not read selection"));
         return;
       }
       const selectedText = htmlToPlainText(selResult.value?.data || "");
       if (selectedText.trim().length > 0) {
-        resolve({ scope: "selection", text: selectedText, closingText: null, quotedText: null, debugInfo: `selection used [${debugPrefix}]` });
+        resolve({ scope: "selection", text: selectedText, closingText: null, quotedText: null });
         return;
       }
-      getFullBodyText().then((r) => resolve({ ...r, debugInfo: `fell back to body [${debugPrefix}, trimmedLen=${selectedText.trim().length}]` }), reject);
+      getFullBodyText().then(resolve, reject);
     });
   });
 }
@@ -767,7 +769,7 @@ async function onRewrite(language) {
   setStatus(statusEl, "Reading text…");
 
   try {
-    const { scope, text, closingText, quotedText, debugInfo } = await getSelectedOrFullText();
+    const { scope, text, closingText, quotedText } = await getSelectedOrFullText();
     if (!text || text.trim().length === 0) {
       setStatus(statusEl, "Nothing to rewrite — select some text or write a message first.", "error");
       return;
@@ -789,38 +791,14 @@ async function onRewrite(language) {
     const rewritten = unmarkLineBreaks(rawRewritten).trim();
 
     await writeRewrittenText(scope, rewritten, closingText, quotedText);
-    const baseMsg = scope === "selection" ? "Selection rewritten." : "Message rewritten.";
-    setStatus(statusEl, debugInfo ? `${baseMsg} DEBUG: ${debugInfo}` : baseMsg, "success");
+    setStatus(statusEl, scope === "selection" ? "Selection rewritten." : "Message rewritten.", "success");
   } catch (e) {
     setStatus(statusEl, `Rewrite failed: ${e.message}`, "error");
   }
 }
 
-// TEMPORARY DIAGNOSTIC (2026-10-30): body.getSelectedDataAsync is reported
-// as "not a function" even on Outlook on the web after focusing the body
-// first. Office.js's own isSetSupported() is the authoritative way to ask
-// what requirement sets this specific host session actually honors —
-// show it directly in the UI (no devtools needed) rather than guessing
-// further whether this is a manifest issue or a genuine host gap. Remove
-// once diagnosed.
-function renderDiagnostics() {
-  const sets = ["1.1", "1.2", "1.3", "1.5", "1.8", "1.9", "1.10"];
-  const lines = sets.map((v) => {
-    try {
-      return `${v}=${Office.context.requirements.isSetSupported("Mailbox", v)}`;
-    } catch (e) {
-      return `${v}=err(${e.message})`;
-    }
-  });
-  const diag = document.getElementById("mailbox-requirement-diagnostics");
-  if (diag) {
-    diag.textContent = `DEBUG requirementSets: ${lines.join(" ")} | host=${Office.context.mailbox?.diagnostics?.hostName || "?"} v=${Office.context.mailbox?.diagnostics?.hostVersion || "?"}`;
-  }
-}
-
 Office.onReady(() => {
   currentSettings = loadAllSettings();
-  renderDiagnostics();
 
   trialStatus = evaluateTrialStatus(currentSettings);
   if (!trialStatus.licensed) {
