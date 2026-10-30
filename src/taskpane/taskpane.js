@@ -459,6 +459,41 @@ function splitTypedClosing(text) {
   return { bodyText, closingText: closingLines.join("\n") };
 }
 
+// Replying/forwarding inserts a quoted-header block ("From: Name
+// <email@domain.com>" / "Sent: <date>" / "To: ..." / "Subject: ...")
+// followed by the original message. Translating that would mangle the
+// original sender's name/address and the whole quoted conversation, and
+// the user isn't asking to rewrite someone else's email anyway — only
+// their own new reply above it. Detect the header line (requires both a
+// "From:"-style line with an email in angle brackets AND a nearby
+// "Sent:"/"Date:" line, to avoid false-positives on a sentence that
+// happens to start with "From") and treat everything from there to the
+// end of the text as quoted content: excluded from the AI prompt,
+// reattached verbatim. Best-effort, English headers only for now —
+// extend FROM_LINE_PATTERN / SENT_LINE_PATTERN for other Outlook locales
+// as needed.
+const FROM_LINE_PATTERN = /^from:\s*.*<[^<>@]+@[^<>]+>/i;
+const SENT_LINE_PATTERN = /^(sent|date):/i;
+const QUOTE_HEADER_LOOKAHEAD = 4;
+
+function splitQuotedThread(text) {
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (!FROM_LINE_PATTERN.test(lines[i].trim())) continue;
+    const windowEnd = Math.min(lines.length, i + 1 + QUOTE_HEADER_LOOKAHEAD);
+    const hasSentLine = lines.slice(i + 1, windowEnd).some((l) => SENT_LINE_PATTERN.test(l.trim()));
+    if (!hasSentLine) continue;
+
+    const mainLines = lines.slice(0, i);
+    while (mainLines.length && mainLines[mainLines.length - 1].trim() === "") mainLines.pop();
+    const mainText = mainLines.join("\n");
+    const quotedText = lines.slice(i).join("\n");
+    if (!mainText.trim()) return { mainText: text, quotedText: null };
+    return { mainText, quotedText };
+  }
+  return { mainText: text, quotedText: null };
+}
+
 function htmlToPlainText(html) {
   const container = document.createElement("div");
   container.style.position = "absolute";
@@ -483,8 +518,9 @@ function getFullBodyText() {
         return;
       }
       const { bodyHtml, signatureHtml } = splitSignature(fullResult.value || "");
-      const { bodyText, closingText } = splitTypedClosing(htmlToPlainText(bodyHtml));
-      resolve({ scope: "body", text: bodyText, signatureHtml, closingText });
+      const { mainText, quotedText } = splitQuotedThread(htmlToPlainText(bodyHtml));
+      const { bodyText, closingText } = splitTypedClosing(mainText);
+      resolve({ scope: "body", text: bodyText, signatureHtml, closingText, quotedText });
     });
   });
 }
@@ -501,7 +537,7 @@ function getSelectedOrFullText() {
       }
       const selectedText = htmlToPlainText(selResult.value?.data || "");
       if (selectedText.trim().length > 0) {
-        resolve({ scope: "selection", text: selectedText, signatureHtml: null, closingText: null });
+        resolve({ scope: "selection", text: selectedText, signatureHtml: null, closingText: null, quotedText: null });
         return;
       }
       getFullBodyText().then(resolve, reject);
@@ -522,11 +558,12 @@ function plainTextToHtml(text) {
   return escaped.replace(/\n/g, "<br>");
 }
 
-function writeRewrittenText(scope, text, signatureHtml, closingText) {
+function writeRewrittenText(scope, text, signatureHtml, closingText, quotedText) {
   return new Promise((resolve, reject) => {
     const coercion = { coercionType: Office.CoercionType.Html };
     const closingHtml = closingText ? "<br><br>" + plainTextToHtml(closingText) : "";
-    const html = plainTextToHtml(text) + closingHtml + (signatureHtml || "");
+    const quotedHtml = quotedText ? "<br><br>" + plainTextToHtml(quotedText) : "";
+    const html = plainTextToHtml(text) + closingHtml + (signatureHtml || "") + quotedHtml;
     const callback = (result) => {
       if (result.status === Office.AsyncResultStatus.Succeeded) resolve();
       else reject(new Error(result.error?.message || "Could not write result back"));
@@ -736,7 +773,7 @@ async function onRewrite(language) {
   setStatus(statusEl, "Reading text…");
 
   try {
-    const { scope, text, signatureHtml, closingText } = await getSelectedOrFullText();
+    const { scope, text, signatureHtml, closingText, quotedText } = await getSelectedOrFullText();
     if (!text || text.trim().length === 0) {
       setStatus(statusEl, "Nothing to rewrite — select some text or write a message first.", "error");
       return;
@@ -757,7 +794,7 @@ async function onRewrite(language) {
     // result.Trim()).
     const rewritten = unmarkLineBreaks(rawRewritten).trim();
 
-    await writeRewrittenText(scope, rewritten, signatureHtml, closingText);
+    await writeRewrittenText(scope, rewritten, signatureHtml, closingText, quotedText);
     setStatus(statusEl, scope === "selection" ? "Selection rewritten." : "Message rewritten.", "success");
   } catch (e) {
     setStatus(statusEl, `Rewrite failed: ${e.message}`, "error");
