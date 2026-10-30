@@ -381,35 +381,18 @@ function normalizeNewlines(text) {
   return text.replace(/\n{2,}/g, "\n\n");
 }
 
-// Outlook inserts the user's signature as a <div id="Signature"> wrapper
-// (the standard OWA/new-Outlook convention) containing their name, contact
-// details, a logo/photo image, and links. Rewriting the whole body as plain
-// text and back destroys all of that — confirmed live: signature, images,
-// phone numbers and website links all got mangled or dropped. Detecting
-// and splitting the signature off before the AI ever sees it, then
-// reattaching its original HTML byte-for-byte afterward, keeps it
-// completely untouched. (If no id="Signature" element is found — a custom
-// signature, or none at all — there's nothing to split off and the whole
-// body is rewritten as before.)
-function findSignatureElement(root) {
-  const candidates = root.querySelectorAll("[id]");
-  for (const el of candidates) {
-    if (el.id && el.id.toLowerCase() === "signature") return el;
-  }
-  return null;
-}
-
-function splitSignature(html) {
-  const container = document.createElement("div");
-  container.innerHTML = html;
-  const sigEl = findSignatureElement(container);
-  if (!sigEl) {
-    return { bodyHtml: html, signatureHtml: null };
-  }
-  const signatureHtml = sigEl.outerHTML;
-  sigEl.remove();
-  return { bodyHtml: container.innerHTML, signatureHtml };
-}
+// NOTE: an earlier version of this file stripped out a <div id="Signature">
+// wrapper before sending text to the AI, on the assumption that Outlook
+// only uses that id for an actual attached signature block. A real OWA
+// reply (inspected live, 2026-10-30) disproved that: OWA wraps the user's
+// *entire typed reply* together with their signature inside one
+// id="Signature" container. Stripping it was silently discarding the
+// user's whole message and sending the huge quoted/forwarded email in its
+// place — which some providers then refused, surfacing as "the provider
+// returned an empty response". That approach has been removed entirely.
+// Logo/photo images inside a real signature still aren't preserved
+// (a known limitation of the plain-text round trip below), but the
+// message itself is never dropped.
 
 // Many signatures aren't an Outlook-inserted <div id="Signature"> at all —
 // just typed sign-off lines at the end of the message ("Kind regards, John
@@ -427,6 +410,10 @@ const CLOSING_PHRASE_PATTERNS = [
   /^감사합니다[.!]?$/,
   /^수고하세요[.!]?$/,
   /^안녕히\s*계세요[.!]?$/,
+  // Mail-client auto-taglines ("Sent from Outlook", "Sent from my iPhone")
+  // — these used to live inside Outlook's id="Signature" wrapper, which is
+  // no longer treated specially (see note above), so catch them here too.
+  /^sent from .+$/i,
 ];
 const KOREAN_NAME_SUFFIX_PATTERN = /(올림|드림|드립니다)[.]?$/;
 const MAX_CLOSING_LINE_LENGTH = 40;
@@ -517,10 +504,9 @@ function getFullBodyText() {
         reject(new Error(fullResult.error?.message || "Could not read message body"));
         return;
       }
-      const { bodyHtml, signatureHtml } = splitSignature(fullResult.value || "");
-      const { mainText, quotedText } = splitQuotedThread(htmlToPlainText(bodyHtml));
+      const { mainText, quotedText } = splitQuotedThread(htmlToPlainText(fullResult.value || ""));
       const { bodyText, closingText } = splitTypedClosing(mainText);
-      resolve({ scope: "body", text: bodyText, signatureHtml, closingText, quotedText });
+      resolve({ scope: "body", text: bodyText, closingText, quotedText });
     });
   });
 }
@@ -537,7 +523,7 @@ function getSelectedOrFullText() {
       }
       const selectedText = htmlToPlainText(selResult.value?.data || "");
       if (selectedText.trim().length > 0) {
-        resolve({ scope: "selection", text: selectedText, signatureHtml: null, closingText: null, quotedText: null });
+        resolve({ scope: "selection", text: selectedText, closingText: null, quotedText: null });
         return;
       }
       getFullBodyText().then(resolve, reject);
@@ -558,12 +544,12 @@ function plainTextToHtml(text) {
   return escaped.replace(/\n/g, "<br>");
 }
 
-function writeRewrittenText(scope, text, signatureHtml, closingText, quotedText) {
+function writeRewrittenText(scope, text, closingText, quotedText) {
   return new Promise((resolve, reject) => {
     const coercion = { coercionType: Office.CoercionType.Html };
     const closingHtml = closingText ? "<br><br>" + plainTextToHtml(closingText) : "";
     const quotedHtml = quotedText ? "<br><br>" + plainTextToHtml(quotedText) : "";
-    const html = plainTextToHtml(text) + closingHtml + (signatureHtml || "") + quotedHtml;
+    const html = plainTextToHtml(text) + closingHtml + quotedHtml;
     const callback = (result) => {
       if (result.status === Office.AsyncResultStatus.Succeeded) resolve();
       else reject(new Error(result.error?.message || "Could not write result back"));
@@ -773,7 +759,7 @@ async function onRewrite(language) {
   setStatus(statusEl, "Reading text…");
 
   try {
-    const { scope, text, signatureHtml, closingText, quotedText } = await getSelectedOrFullText();
+    const { scope, text, closingText, quotedText } = await getSelectedOrFullText();
     if (!text || text.trim().length === 0) {
       setStatus(statusEl, "Nothing to rewrite — select some text or write a message first.", "error");
       return;
@@ -794,7 +780,7 @@ async function onRewrite(language) {
     // result.Trim()).
     const rewritten = unmarkLineBreaks(rawRewritten).trim();
 
-    await writeRewrittenText(scope, rewritten, signatureHtml, closingText, quotedText);
+    await writeRewrittenText(scope, rewritten, closingText, quotedText);
     setStatus(statusEl, scope === "selection" ? "Selection rewritten." : "Message rewritten.", "success");
   } catch (e) {
     setStatus(statusEl, `Rewrite failed: ${e.message}`, "error");
